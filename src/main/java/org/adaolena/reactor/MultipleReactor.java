@@ -99,7 +99,7 @@ public class MultipleReactor<V, T extends Processable<V>>{
     }
 
 
-
+/*
     @Override
     public void run() {
         LOGGER.info("##########################################");
@@ -139,7 +139,7 @@ public class MultipleReactor<V, T extends Processable<V>>{
 
         }
     }
-
+*/
     public void stopAll() throws Exception{
         for (SingleReactor<V, T> reactor : reactors.values()) {
             LOGGER.info("waiting for "+reactor.name);
