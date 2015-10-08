@@ -2,12 +2,12 @@ package org.adaolena.reactor;
 
 import org.apache.log4j.Logger;
 
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.Map;
-import java.util.NoSuchElementException;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Created by adaolena on 07/10/15.
@@ -18,19 +18,23 @@ public class MultipleReactor<V, T extends Processable<V>>{
 
     volatile SingleReactor<V, T> reactorToWrite;
     Map<String, SingleReactor<V, T>> reactors = new ConcurrentHashMap<>();
+    private AtomicBoolean work = new AtomicBoolean(true);
     Iterator<SingleReactor<V,T>> iterator ;
+    Lock lock = new ReentrantLock();
+    Condition isProcessing = lock.newCondition();
     public MultipleReactor(int reactorsNumber, T processor) {
         for (int i = 0; i < reactorsNumber; i++) {
             reactors.put("" + i, new SingleReactor<V, T>(processor, "" + i));
         }
-        iterator = cycle(reactors.values());
+        iterator = newCycleIterator(new ArrayList<SingleReactor<V, T>>(reactors.values()));
         //new Thread(this).start();
     }
 
     public void offer(V v) {
 
-        //really simple round robin
+
         SingleReactor<V,T> reactor = iterator.next();
+        //LOGGER.info("dispatch to "+reactor.name);
         reactor.offer(v);
 
     }
@@ -47,7 +51,7 @@ public class MultipleReactor<V, T extends Processable<V>>{
             }
             public T next() {
                 if (!hasNext()) {
-                    throw new NoSuchElementException();
+                    iterator = iterable.iterator();
                 }
                 removeFrom = iterator;
                 return iterator.next();
@@ -58,11 +62,47 @@ public class MultipleReactor<V, T extends Processable<V>>{
         };
     }
 
+    CycleIterator<SingleReactor<V, T>> newCycleIterator(List<SingleReactor<V, T> > reactors){
+        return new CycleIterator<SingleReactor<V, T>>(reactors);
+    }
+    public class CycleIterator<T> implements  Iterator<T>{
+        Lock lock = new ReentrantLock();
+        List<T> vals;
+        volatile int currentindex;
+        public CycleIterator(List<T> values) {
+            vals = values;
+        }
 
-/**
- * Will be used to a more sophiticate
+        @Override
+        public boolean hasNext() {
+            return true;
+        }
+
+        @Override
+        public T next() {
+            T val = vals.get(currentindex);
+            lock.lock();
+            if(currentindex == vals.size()-1){
+                currentindex = 0;
+            }
+            else{
+                currentindex++;
+            }
+            lock.unlock();
+            return val;
+        }
+
+        @Override
+        public void remove() {
+            return;
+        }
+    }
+
+
+
     @Override
     public void run() {
+        LOGGER.info("##########################################");
 
         while (work.get()) {
             int min = Integer.MAX_VALUE;
@@ -77,34 +117,41 @@ public class MultipleReactor<V, T extends Processable<V>>{
                     nextReactorToWork = reactor;
                 }
             }
+            if(reactorToWrite == null){
+                LOGGER.info("##########################################choosed "+nextReactorToWork.name );
 
+            }else{
+                LOGGER.info("##########################################from "+reactorToWrite.name + " to "+nextReactorToWork.name);
+
+            }
             reactorToWrite = nextReactorToWork;
             try {
                 Thread.sleep(50);
             } catch (InterruptedException e) {
                 e.printStackTrace();
-                stopAll();
+                try{
+                    stopAll();
+
+                }catch(Exception ex){
+                    ex.printStackTrace();
+                }
             }
 
         }
     }
-*/
-    /**
-     * Stop all reactors
-     */
-    public void stopAll() {
+
+    public void stopAll() throws Exception{
         for (SingleReactor<V, T> reactor : reactors.values()) {
-            reactor.stop();
+            LOGGER.info("waiting for "+reactor.name);
+            int count = reactor.stop();
+            LOGGER.info(reactor.name + " stopped, have processed "+count);
+
         }
+        work.compareAndSet(true, false);
+
     }
 
-    public boolean isDone(){
-        for (SingleReactor<V, T> reactor : reactors.values()) {
-            if (reactor.getChannel().size() > 0){
-                return false;
-            }
-        }
-        return true;
-    }
+
+
 
 }
